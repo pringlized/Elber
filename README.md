@@ -1,6 +1,5 @@
-![Elber Logo](assets/logo.png)
-
-# Elber
+<img src="assets/logo.png" align="right" />
+## Elber
 Elixir based ride-sharing simulator inspired by a few of those companies we know.
 
 ### Concept
@@ -30,16 +29,16 @@ Currently each driver will transit 100 zones before punching off the clock.
 
 ----
 ## Improvements/Additions
-* Driver state management.  If driver process dies, it will respawn from last known state state
-* Running on a realistic and accurate time framework
-* Design driver management and replenishment to ebb and flow with customer demand
-* Set rider thresholds to manage the number the customer demand
-* City status report
- * Total drivers available
- * Total drivers in transit to pickup
- * Total drivers in transit to destination
- * Total riders searching
- * Total riders waiting to be picked up
- * Total riders in transit
- * etc
-* Phoenix webapp to visualize the city environment
+- Driver state management.  If driver process dies, it will respawn from last known state state
+- Running on a realistic and accurate time framework
+- Design driver management and replenishment to ebb and flow with customer demand
+- Set rider thresholds to manage the number the customer demand
+- City status report
+  - Total drivers available
+  - Total drivers in transit to pickup
+  - Total drivers in transit to destination
+  - Total riders searching
+  - Total riders waiting to be picked up
+  - Total riders in transit
+  - etc
+- Phoenix webapp to visualize the city environment
