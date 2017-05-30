@@ -1,4 +1,5 @@
 <img src="assets/logo.png" align="right" />
+
 ## Elber
 Elixir based ride-sharing simulator inspired by a few of those companies we know.
 
