@@ -1,18 +1,23 @@
 defmodule Elber do
-  @moduledoc """
-  Documentation for Elber.
-  """
+    use Application
 
-  @doc """
-  Hello world.
+    def start(_type, _args) do
+        config = %{
+            city_server: nil,
+            city_supervisor: nil,
+            zone_supervisor: nil,
+            driver_supervisor: nil,
+            rider_supervisor: nil,
+            grid_size: {12,12},
+            drivers: 350,
+            riders: 500
+        }
 
-  ## Examples
+        start_city(config)
+    end
 
-      iex> Elber.hello
-      :world
+    def start_city(config) do
+        Elber.Supervisor.start_link(config)
+    end
 
-  """
-  def hello do
-    :world
-  end
 end
