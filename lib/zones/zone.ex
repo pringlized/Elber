@@ -54,7 +54,11 @@ defmodule Elber.Zones.Zone do
     def get_driver(zone) do
         #Logger.info("[#{zone}] Getting rider")
         GenServer.call(via_tuple(zone), {:get_driver})
-    end    
+    end  
+
+    def get_drivers(zone) do
+        GenServer.call(via_tuple(zone), {:get_drivers})
+    end  
 
     def remove_driver(zone, [pid, uuid]) do
         Logger.debug("[#{zone}] Removing [#{inspect(pid)}]")
@@ -125,6 +129,10 @@ defmodule Elber.Zones.Zone do
         #IO.inspect state.drivers
         driver = List.first(state.drivers)
         {:reply, driver, state}
+    end
+
+    def handle_call({:get_drivers}, _from, state) do
+        {:reply, state.drivers, state}
     end
 
     def handle_call({:get_coordinates}, _from, state) do

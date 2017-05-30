@@ -9,7 +9,7 @@ defmodule Elber do
             driver_supervisor: nil,
             rider_supervisor: nil,
             grid_size: {12,12},
-            drivers: 350,
+            drivers: 300,
             riders: 500
         }
 

@@ -10,7 +10,7 @@ defmodule Elber.Drivers.Struct do
         # currently search for fare
         searching: False,         
         # length of shift in zones traveled
-        shift_length: 100,
+        shift_length: 70,
         # start_loc:
         start_loc: :zone1,
         # ride pid
@@ -19,8 +19,10 @@ defmodule Elber.Drivers.Struct do
         rider_uuid: nil,
         # requests sent out to riders
         rider_requests: [],
+        # time the rider started looking for a ride
+        rider_start_datetime: nil,
         # time of accepted request
-        request_datetime: nil,          
+        rider_request_datetime: nil,          
         # located a rider to send a pickup request
         has_rider: False,
         # rider is in the driver

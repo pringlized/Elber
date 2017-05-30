@@ -111,7 +111,7 @@ defmodule Elber.Drivers.Driver do
     end    
 
     defp end_trip(state) do
-        log(state, :info, "At dropoff location and dropping off [#{state.rider_uuid}]")         
+        log(state, :info, "Drop off [#{state.rider_uuid}]")         
         #Logger.info("[#{state.uuid}] is at location and dropping off [#{state.rider_uuid}] ")
         :timer.sleep 100  
 
@@ -130,14 +130,15 @@ defmodule Elber.Drivers.Driver do
         record = [
             state.uuid,
             state.rider_uuid,
-            state.request_datetime,
+            state.rider_start_datetime,
+            state.rider_request_datetime,
             state.meter_on,
             state.pickup_loc,
             state.meter_off,
             state.dest_loc,
             length(route_traveled) - 1
         ]
-        IO.inspect record
+        #IO.inspect record
         data = Enum.join(record, ",") |> (&(&1 <> "\r\n")).()
         {:ok, file} = File.open "logs/history.csv", [:append]
         IO.binwrite file, data
@@ -165,6 +166,22 @@ defmodule Elber.Drivers.Driver do
         })        
     end
 
+    defp punch_off(state) do
+        log(state, :info, "---------- OFF THE CLOCK ----------") 
+
+        # remove from curr_loc
+        Zone.remove_driver(state.curr_loc, [self(), state.uuid])
+
+        # reset cab state
+        #state = reset(state)
+
+        # punch off the clock and stop being available
+        state = Map.merge(state, %{
+            available: False,
+            searching: False
+        })      
+    end    
+
     defp log(state, type, msg) do
         predicate = "[d][#{state.uuid}] "
         case type do
@@ -175,6 +192,10 @@ defmodule Elber.Drivers.Driver do
             _ ->
                 Logger.info(predicate <> msg)
         end
+    end
+
+    defp get_datetime do
+        Timex.format!(Timex.local, "{ISO:Extended}")
     end
 
     # -----------------------------------
@@ -206,7 +227,8 @@ defmodule Elber.Drivers.Driver do
                 has_rider: True,
                 rider_pid: rider.pid,
                 rider_uuid: rider.uuid,
-                request_datetime: "NOW",
+                rider_start_datetime: rider.start_datetime,
+                rider_request_datetime: get_datetime,
                 #dest_loc: rider.pickup_loc,
                 pickup_loc: rider.pickup_loc,
                 dropoff_loc: rider.dropoff_loc
@@ -270,18 +292,26 @@ defmodule Elber.Drivers.Driver do
             #Logger.info("[#{state.uuid}] At pickup location [#{state.pickup_loc}] for [#{state.rider_uuid}]")
 
             # send arrived notification to rider
-            status = Elber.Riders.Rider.driver_arrived(state.rider_pid)
+            try do        
+                status = Elber.Riders.Rider.driver_arrived(state.rider_pid)
 
-            # send begin trip notification to self
-            if status == :ok do
-                state = Map.merge(state, %{
-                    arrived: True,
-                    in_vehicle: True,
-                })
-                send(self(), {:begin_trip})
-            else
-                log(state, :error, "ERROR picking up [#{state.rider_uuid}]")                 
-                #Logger.error("[#{state.uuid}] ERROR picking up [#{state.rider_uuid}]")            
+                # send begin trip notification to self
+                if status == :ok do
+                    state = Map.merge(state, %{
+                        arrived: True,
+                        in_vehicle: True,
+                    })
+                    send(self(), {:begin_trip})
+                else
+                    log(state, :error, "ERROR picking up [#{state.rider_uuid}]")                 
+                    #Logger.error("[#{state.uuid}] ERROR picking up [#{state.rider_uuid}]")            
+                end
+            catch
+                :exit, _ -> 
+                    Logger.error("[#{state.uuid}] ERROR picking up rider [#{state.rider_uuid}]. Resetting")
+                    :timer.sleep(1000)
+                    state = reset(state)
+                    Process.send_after(self(), {:search}, 500)  
             end
         end
         {:noreply, state}
@@ -292,7 +322,7 @@ defmodule Elber.Drivers.Driver do
         #Logger.info("[#{state.uuid}] Begin trip for [#{state.rider_uuid}]")
 
         state = Map.merge(state, %{
-            meter_on: "NOW",
+            meter_on: get_datetime,
         })
 
         #IO.inspect(state)
@@ -314,29 +344,23 @@ defmodule Elber.Drivers.Driver do
         {:noreply, state}
     end
 
+    # TODO: must validate at destination state and ready to end trip
     def handle_info({:end_trip}, state) do
         log(state, :info, "End trip for [#{state.rider_uuid}]")
         
         # trun the meter off
         state = Map.merge(state, %{
-            meter_off: "NOW",
+            meter_off: get_datetime,
         })
 
+        # drop off
         status = Elber.Riders.Rider.dropoff(state.rider_pid)
-
-        #IO.puts("\n")
-        #IO.inspect state
 
         # end trip and write record
         status = end_trip(state)        
 
-        #TODO: reset state
+        # reset the driver state
         state = reset(state)
-
-        #IO.puts("\n")
-        #IO.inspect state   
-
-     
 
         # hang for a couple seconds
         :timer.sleep(5000)        
@@ -349,50 +373,41 @@ defmodule Elber.Drivers.Driver do
 
     def handle_info({:search}, state) do
         if state.available == True do
-            log(state, :info, "Searching for a rider")            
-            #Logger.info("[#{state.uuid}] Searching for a rider")
+            # check shift
+            if Enum.count(state.zones_traveled) >= state.shift_length do
+                # done working
+                punch_off(state)               
+            else
+                log(state, :info, "Searching for a rider")            
 
-            # set searching state
-            state = Map.merge(state, %{
-                searching: True
-            })
+                # set searching state
+                state = Map.merge(state, %{
+                    searching: True
+                })
 
-            # search until a customer request comes in
-            # hang in this zone for 5 seconds
-            :timer.sleep(1000)
+                # search until a customer request comes in
+                # hang in this zone for a bit
+                :timer.sleep(1000)
 
-            # Move to a random adjacent zone
-            # - get adjacent zones
-            # - filter out zone traveled from
-            # - get random zone from remaining list
-            [dest_loc] = Zone.get_adjacent_zones(state.curr_loc)
-            |> (&List.delete(&1, Enum.at(&1, 1))).() # DONT THINK THIS IS WORKING
-            |> (&Enum.take_random(&1, 1)).()
+                # Move to a random adjacent zone
+                # - get adjacent zones
+                # - filter out zone traveled from
+                # - get random zone from remaining list
+                [dest_loc] = Zone.get_adjacent_zones(state.curr_loc)
+                |> (&List.delete(&1, Enum.at(&1, 1))).() # DONT THINK THIS IS WORKING
+                |> (&Enum.take_random(&1, 1)).()          
 
-            #log(state, :info, "Driving to [#{dest_loc}]")
-            #Logger.info("[#{state.uuid}] Driving to [#{dest_loc}]")
-            #:timer.sleep(1000)
+                # get a route, update our state, then travel there
+                state = find_route(state, dest_loc)
+                |> (&update_route(state, &1)).()
+                |> (&travel_to_dest(&1)).()
 
-            # TODO: REMOVE self from zone in [drivers_available]
-            # delete driver to zone
-            #Zone.remove_driver(state.curr_loc, [self(), state.uuid])             
+                # reset cab state
+                state = reset(state)
 
-            # get a route, update our state, then travel there
-            state = find_route(state, dest_loc)
-            |> (&update_route(state, &1)).()
-            |> (&travel_to_dest(&1)).()
-
-            #IO.inspect state
-
-            # TODO: ADD self to new zone in [drivers_available]
-            #Zone.add_driver(state.curr_loc, [self(), state.uuid])                    
-
-            # reset cab state
-            state = reset(state)
-
-            # hang in this zone for 5 seconds
-            #:timer.sleep(5000)
-            send(self(), {:search})
+                # continue the search
+                send(self(), {:search})
+            end
         end
         {:noreply, state}
     end

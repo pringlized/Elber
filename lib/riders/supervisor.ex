@@ -7,7 +7,7 @@ defmodule Elber.Riders.Supervisor do
 
     def init(_) do
         children = [
-            worker(Elber.Riders.Rider, [], restart: :transient)
+            worker(Elber.Riders.Rider, [], restart: :temporary)
         ]
 
         supervise(children, strategy: :simple_one_for_one)

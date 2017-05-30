@@ -30,35 +30,57 @@ defmodule Elber.Riders.Rider do
         data = %{
             pid: self(),
             uuid: state.uuid,
+            start_datetime: state.start_datetime,
             pickup_loc: state.pickup_loc,
             dropoff_loc: state.dropoff_loc
         }
-        status = Elber.Drivers.Driver.request_ride(driver, data)
-        
-        #IO.inspect status
+        try do
+            status = Elber.Drivers.Driver.request_ride(driver, data)
 
-        # update status and now wait for arrival
-        if status == :ok do
-            Logger.info("[#{state.uuid}] Request accepted from [#{inspect(driver)}]")                
-            state = Map.merge(state, %{
-                is_requesting: False,
-                driver_pid: driver,
-                request_datetime: "NOW"
-            })
-        else
-            # pause for a moment
-            Logger.info("[#{state.uuid}] Request DENIED from [#{inspect(driver)}]")                 
-            :timer.sleep(1000)
-            send(self(), {:locate_driver})
+            # update status and now wait for arrival
+            if status == :ok do
+                Logger.info("[#{state.uuid}] Request accepted from [#{inspect(driver)}]")                
+                state = Map.merge(state, %{
+                    is_requesting: False,
+                    driver_pid: driver,
+                    request_datetime: "NOW"
+                })
+            else
+                # pause for a moment
+                Logger.info("[#{state.uuid}] Request DENIED from [#{inspect(driver)}]")
+
+                # add driver to denied_requests list
+                if !driver in state.requests_denied do
+                    state = Map.merge(state, %{
+                        requests_denied: state.requests_denied ++ [driver]
+                    })
+                end
+                #IO.inspect state
+                :timer.sleep(1000)
+                send(self(), {:locate_driver})
+            end            
+        catch
+            :exit, _ -> 
+                Logger.error("[#{state.uuid}] ERROR requesting ride from [#{inspect(driver)}]. Locating another driver")
+                :timer.sleep(1000)
+                send(self(), {:locate_driver})      
         end
+        
         state     
     end
+
+    defp get_datetime do
+        Timex.format!(Timex.local, "{ISO:Extended}")
+    end    
 
     # -----------------------------------
     # CALLBACKS
     # -----------------------------------
     def init([state]) do
-        Process.send_after(self(), {:locate_driver}, 5000)        
+        state = Map.merge(state, %{
+            start_datetime: get_datetime
+        })
+        send(self(), {:locate_driver})       
         {:ok, state}
     end
 
@@ -91,7 +113,7 @@ defmodule Elber.Riders.Rider do
             in_vehicle: False
         })
 
-        IO.inspect state
+        #IO.inspect state
 
         {:reply, state, state}
     end
@@ -101,8 +123,8 @@ defmodule Elber.Riders.Rider do
         Logger.debug("[#{state.uuid}] Looking in [#{state.pickup_loc}] for a driver")
         driver = Zone.get_driver(state.pickup_loc)
 
-        # look in zone for a driver
-        if driver != nil do
+        # look in zone for a driver that hasn't already denied
+        if driver != nil && !driver in state.requests_denied do
             send_ride_request(state, driver)
         else
             Logger.info("[#{state.uuid}] No driver found in [#{state.pickup_loc}]. Expanding search..")
@@ -115,12 +137,10 @@ defmodule Elber.Riders.Rider do
             
             #IO.inspect driver
 
-            if driver != nil do
-                IO.puts("FOUND!!!")               
+            if driver != nil do             
                 send_ride_request(state, driver)
             else
-                #IO.puts("NOT FOUND")
-                # else expand search to adjacent zones
+                # try again until a driver is within range
                 :timer.sleep(3000)
                 send(self(), {:locate_driver})                 
             end

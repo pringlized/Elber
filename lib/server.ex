@@ -3,6 +3,7 @@ defmodule Elber.Server do
     require Logger
     require UUID
     import Supervisor.Spec
+    alias Elber.Zones.Zone    
 
     defmodule State do
         defstruct sup: nil, size: nil, mfa: nil, grid_size: nil
@@ -117,7 +118,30 @@ defmodule Elber.Server do
         # start the supervisors
         send self(), {:start}
 
+        # start cleaning out zones of dead driver processes
+        Process.send_after(self(), {:check_zones}, 10000)        
+
         {:ok, config}
+    end
+
+    # TODO: go through all the zones, get all the drivers and purge ones that aren't alive
+    def handle_info({:check_zones}, state) do
+        # HACK: hardcoding for 12x12 grid
+        # get all zones
+        removed = Enum.map(1..144, fn(num) ->
+            zone_name = :"zone#{num}"
+            drivers = Zone.get_drivers(zone_name)
+            removed = Enum.each(drivers, fn(driver_pid) ->
+                if !Process.alive?(driver_pid) do
+                    Logger.info("PURGING DEAD DRIVER #{inspect(driver_pid)} from #{zone_name}")
+                    Zone.remove_driver(zone_name, [driver_pid, nil])
+                end
+                nil
+            end)
+            nil
+        end)
+        Process.send_after(self(), {:check_zones}, 30000)
+        {:noreply, state}
     end
 
     def handle_call({:state}, _from, state) do
@@ -153,7 +177,7 @@ defmodule Elber.Server do
         {_, driver_sup} = Supervisor.start_child(state.city_supervisor, supervisor(Elber.Drivers.Supervisor, []))
         Logger.info("Driver supervisor started")        
         state = put_in(state, [:driver_supervisor], driver_sup)
-        drivers = Enum.each(1..3, fn(x) ->
+        drivers = Enum.each(1..state.drivers, fn(x) ->
             {_, worker} = start_driver(driver_sup)
             #IO.inspect worker
             worker
@@ -164,7 +188,7 @@ defmodule Elber.Server do
         {_, rider_sup} = Supervisor.start_child(state.city_supervisor, supervisor(Elber.Riders.Supervisor, []))
         Logger.info("Rider supervisor started")        
         state = put_in(state, [:rider_supervisor], rider_sup)    
-        riders = Enum.each(1..10, fn(x) ->
+        riders = Enum.each(1..state.riders, fn(x) ->
             {_, worker} = start_rider(rider_sup, state.grid_size)
             worker
         end)    

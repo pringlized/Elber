@@ -11,7 +11,7 @@ defmodule Elber.Drivers.Supervisor do
     def init(_) do
 
         children = [
-            worker(Elber.Drivers.Driver, [], restart: :transient)
+            worker(Elber.Drivers.Driver, [], restart: :temporary)
         ]
 
         supervise(children, strategy: :simple_one_for_one)
