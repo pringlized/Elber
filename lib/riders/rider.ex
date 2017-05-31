@@ -121,7 +121,7 @@ defmodule Elber.Riders.Rider do
     def handle_info({:locate_driver}, state) do
         # Get a driver from zone if any available
         Logger.debug("[#{state.uuid}] Looking in [#{state.pickup_loc}] for a driver")
-        driver = Zone.get_driver(state.pickup_loc)
+        driver = Zone.get_available_driver(state.pickup_loc)
 
         # look in zone for a driver that hasn't already denied
         if driver != nil && !driver in state.requests_denied do
@@ -131,7 +131,7 @@ defmodule Elber.Riders.Rider do
 
             # not found in current zone. search adjacent zones to get first available driver
             driver = Zone.get_adjacent_zones(state.pickup_loc)
-            |> (&Enum.map(&1, fn(zone) -> Zone.get_driver(zone) end)).()
+            |> (&Enum.map(&1, fn(zone) -> Zone.get_available_driver(zone) end)).()
             |> (&Enum.filter(&1, fn(driver) -> driver != nil end)).()
             |> List.first
             

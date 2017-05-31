@@ -55,13 +55,11 @@ defmodule Elber.Server do
     defp start_zone(zone_supervisor, id, coordinates, grid, grid_size) do
         # build name from map iteration accumulator
         zone_id = :"zone#{id}"
-        zone_state = %{ 
+        zone_state = %Elber.Zones.Struct{ 
             :zone_id => zone_id, 
             :coordinates => coordinates,
             :grid => grid,
-            :grid_size => grid_size,
-            :drivers => [],
-            :riders => []
+            :grid_size => grid_size
         }
         opts = [id: zone_id]
 
@@ -130,11 +128,11 @@ defmodule Elber.Server do
         # get all zones
         removed = Enum.map(1..144, fn(num) ->
             zone_name = :"zone#{num}"
-            drivers = Zone.get_drivers(zone_name)
+            drivers = Zone.get_available_drivers(zone_name)
             removed = Enum.each(drivers, fn(driver_pid) ->
                 if !Process.alive?(driver_pid) do
                     Logger.info("PURGING DEAD DRIVER #{inspect(driver_pid)} from #{zone_name}")
-                    Zone.remove_driver(zone_name, [driver_pid, nil])
+                    Zone.remove_available_driver(zone_name, [driver_pid, nil])
                 end
                 nil
             end)

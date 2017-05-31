@@ -9,8 +9,8 @@ defmodule Elber do
             driver_supervisor: nil,
             rider_supervisor: nil,
             grid_size: {12,12},
-            drivers: 300,
-            riders: 500
+            drivers: 50,
+            riders: 300
         }
 
         start_city(config)

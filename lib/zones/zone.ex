@@ -46,23 +46,21 @@ defmodule Elber.Zones.Zone do
         GenServer.call(via_tuple(zone), {:get_rider})
     end
 
-    def add_driver(zone, [pid, uuid]) do
-        Logger.debug("[#{zone}] Adding driver [#{uuid}]")
-        GenServer.call(via_tuple(zone), {:add_driver, pid}) 
+    def add_available_driver(zone) do
+        GenServer.call(via_tuple(zone), {:add_available_driver, zone}) 
     end
 
-    def get_driver(zone) do
+    def get_available_driver(zone) do
         #Logger.info("[#{zone}] Getting rider")
-        GenServer.call(via_tuple(zone), {:get_driver})
+        GenServer.call(via_tuple(zone), {:get_available_driver})
     end  
 
-    def get_drivers(zone) do
-        GenServer.call(via_tuple(zone), {:get_drivers})
+    def get_available_drivers(zone) do
+        GenServer.call(via_tuple(zone), {:get_available_drivers})
     end  
 
-    def remove_driver(zone, [pid, uuid]) do
-        Logger.debug("[#{zone}] Removing [#{inspect(pid)}]")
-        GenServer.call(via_tuple(zone), {:remove_driver, pid})         
+    def remove_available_driver(zone) do
+        GenServer.call(via_tuple(zone), {:remove_available_driver, zone})         
     end    
 
     # used to lookup name of process
@@ -94,24 +92,6 @@ defmodule Elber.Zones.Zone do
         {:reply, :ok, state}
     end
 
-    def handle_call({:add_driver, driver}, _from, state) do
-        drivers = List.insert_at(state.drivers, -1, driver)
-        state = Map.merge(state, %{
-            drivers: drivers
-        })
-        #IO.inspect state.drivers
-        {:reply, :ok, state}
-    end    
-
-    def handle_call({:remove_driver, driver}, _from, state) do
-        drivers = List.delete(state.drivers, driver)
-        state = Map.merge(state, %{
-            drivers: drivers
-        })
-        #IO.inspect state.drivers
-        {:reply, :ok, state} 
-    end
-
     def handle_call({:remove_rider, rider}, _from, state) do
         riders = List.delete(state.riders, rider)
         state = Map.merge(state, %{
@@ -125,14 +105,37 @@ defmodule Elber.Zones.Zone do
         {:reply, rider, state}
     end
 
-    def handle_call({:get_driver}, _from, state) do
-        #IO.inspect state.drivers
-        driver = List.first(state.drivers)
+    def handle_call({:add_available_driver, zone}, {_from, reference}, state) do
+        # if the driver pid is NOT already in the list
+        if !_from in state.drivers_available do
+            Logger.debug("[#{zone}] Adding available driver [#{inspect(_from)}]")            
+            drivers = List.insert_at(state.drivers_available, -1, _from)
+            state = Map.merge(state, %{
+                drivers_available: drivers
+            })
+        end
+        #IO.inspect state.drivers_available
+        {:reply, :ok, state}
+    end    
+
+    def handle_call({:remove_available_driver, zone}, {_from, reference}, state) do
+        Logger.debug("[#{zone}] Removing available driver [#{inspect(_from)}]")
+        drivers = List.delete(state.drivers_available, _from)
+        state = Map.merge(state, %{
+            drivers_available: drivers
+        })
+        #IO.inspect state.drivers_available
+        {:reply, :ok, state} 
+    end
+
+    def handle_call({:get_available_driver}, _from, state) do
+        #IO.inspect state.drivers_available
+        driver = List.first(state.drivers_available)
         {:reply, driver, state}
     end
 
-    def handle_call({:get_drivers}, _from, state) do
-        {:reply, state.drivers, state}
+    def handle_call({:get_available_drivers}, _from, state) do
+        {:reply, state.drivers_available, state}
     end
 
     def handle_call({:get_coordinates}, _from, state) do
