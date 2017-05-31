@@ -83,7 +83,7 @@ defmodule Elber.Drivers.Driver do
         :timer.sleep 100
 
         # update driver location for availability and gps from current_loc to next_loc
-        # update_gps(state.curr_loc, next_loc)        
+        update_gps(state.curr_loc, next_loc)        
         if state.available == True do
             update_availability(state.curr_loc, next_loc)
         end
@@ -172,7 +172,7 @@ defmodule Elber.Drivers.Driver do
 
         # remove from curr_loc
         update_availability(state.curr_loc)
-        #update_gps(state.curr_loc)
+        update_gps(state.curr_loc)
         #Zone.remove_available_driver(state.curr_loc, [self(), state.uuid])
 
         # reset cab state
@@ -211,9 +211,14 @@ defmodule Elber.Drivers.Driver do
         end
     end
 
-    defp update_gps(at_loc, to_loc) do
-        #Zone.remove_driver_in(at_loc)
-        #Zone.add_driver_in(to_loc)
+    defp update_gps(at_loc, to_loc \\ nil) do
+        if at_loc != nil do
+            remove_status = Zone.remove_driver_in(at_loc)
+        end
+
+        if to_loc != nil do
+            add_status = Zone.add_driver_in(to_loc)
+        end
     end
 
     # -----------------------------------

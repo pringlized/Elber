@@ -61,12 +61,43 @@ defmodule Elber.Zones.Zone do
 
     def remove_available_driver(zone) do
         GenServer.call(via_tuple(zone), {:remove_available_driver, zone})         
-    end    
+    end
+
+    def add_driver_in(zone) do
+        GenServer.call(via_tuple(zone), {:add_driver_in})
+    end
+
+    def remove_driver_in(zone) do
+        GenServer.call(via_tuple(zone), {:remove_driver_in})
+    end
+
+    def get_drivers_in(zone) do
+        GenServer.call(via_tuple(zone), {:get_drivers_in})
+    end
+
+    def get_history(zone) do
+        GenServer.call(via_tuple(zone), {:get_history})
+    end
 
     # used to lookup name of process
     defp via_tuple(name) do
         {:via, Registry, {:zone_registry, name}}
     end
+
+    # ------------------------------------
+    # PRIVATE FUNCTIONS
+    # ------------------------------------
+    defp add_driver_history(state, driver) do
+        datetime = get_datetime
+        item = [{driver, datetime}]
+        Map.merge(state, %{
+            driver_history: List.insert_at(state.driver_history, 0, item)
+        })
+    end
+
+    defp get_datetime do
+        Timex.format!(Timex.local, "{ISO:Extended}")
+    end    
 
     # ------------------------------------
     # CALLBACKS
@@ -138,6 +169,34 @@ defmodule Elber.Zones.Zone do
         {:reply, state.drivers_available, state}
     end
 
+    def handle_call({:add_driver_in}, {_from, reference}, state) do
+        # if the driver pid is NOT already in the list
+        if !_from in state.drivers_in do
+            Logger.debug("[#{state.zone_id}] [#{inspect(_from)}] Entering zone..")            
+            drivers = List.insert_at(state.drivers_in, -1, _from)
+            state = Map.merge(state, %{
+                drivers_in: drivers
+            })
+        end
+
+        # add a gps entry
+        state = add_driver_history(state, _from)
+        {:reply, :ok, state}
+    end
+
+    def handle_call({:remove_driver_in}, {_from, reference}, state) do
+        Logger.debug("[#{state.zone_id}] [#{inspect(_from)}] Leaving zone..")
+        drivers = List.delete(state.drivers_in, _from)
+        state = Map.merge(state, %{
+            drivers_in: drivers
+        })
+        {:reply, :ok, state} 
+    end 
+
+    def handle_call({:get_drivers_in}, _from, state) do
+        {:reply, state.drivers_in, state}
+    end       
+
     def handle_call({:get_coordinates}, _from, state) do
         coordinates = state.coordinates
         {:reply, coordinates, state}
@@ -172,4 +231,9 @@ defmodule Elber.Zones.Zone do
         is_member = Enum.member?(grid -- check_filtered, coordinates)
         {:reply, is_member, state}
     end
+
+    def handle_call({:get_history}, _from, state) do
+        {:reply, state.driver_history, state}
+    end
+
 end

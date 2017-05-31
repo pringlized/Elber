@@ -5,6 +5,7 @@ defmodule Elber.Zones.Struct do
         :coordinates,
         :grid,
         :grid_size,
+        driver_history: [],
         drivers_in: [],
         drivers_available: [],
         riders: []
