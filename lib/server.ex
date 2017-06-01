@@ -31,7 +31,7 @@ defmodule Elber.Server do
         GenServer.call(@name, {:update_state_cache, entity_state})
     end
 
-    def get_state_cache(entity_state) do
+    def get_state_cache do
         GenServer.call(@name, {:get_state_cache})
     end    
 

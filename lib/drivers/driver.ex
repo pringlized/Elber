@@ -1,7 +1,8 @@
 defmodule Elber.Drivers.Driver do
     use GenServer    
     require Logger
-    alias Elber.Zones.Zone    
+    alias Elber.Zones.Zone  
+    alias Elber.Server, as: CityServer  
 
     def start_link(state) do
         log(state, :info, "Starting driver process")           
@@ -75,10 +76,8 @@ defmodule Elber.Drivers.Driver do
         [next_loc | remaining_route] = state.curr_route
         |> (&List.delete(&1, state.curr_loc)).()
 
-        # HACK: total unecessary temp solution to slow things up a hint 
-        # since a zone has a size, it should take N seconds to the next
-        log(state, :debug, "Traveling from #{state.curr_loc} to #{next_loc}")         
-        :timer.sleep 100
+        # TODO: There eventually needs to be a coefficient as add a time delay
+        log(state, :debug, "Traveling from #{state.curr_loc} to #{next_loc}")
 
         # update driver location for availability and gps from current_loc to next_loc
         update_gps(state.curr_loc, next_loc)        
@@ -86,9 +85,8 @@ defmodule Elber.Drivers.Driver do
             update_availability(state.curr_loc, next_loc)
         end
 
-        state = Map.merge(state, %{
-            curr_route: remaining_route
-        })
+        # Update current route with remaining way points
+        state = Map.merge(state, %{curr_route: remaining_route})
 
         # move to next_location
         state = set_curr_loc(state, next_loc)
@@ -107,8 +105,7 @@ defmodule Elber.Drivers.Driver do
     end    
 
     defp end_trip(state) do
-        log(state, :info, "Drop off [#{state.rider_uuid}]")         
-        :timer.sleep 100  
+        log(state, :info, "Drop off [#{state.rider_uuid}]")
 
         # TODO
         # Server.write_history(state)
@@ -143,9 +140,16 @@ defmodule Elber.Drivers.Driver do
         IO.binwrite file, data
         File.close file
 
-        :ok
+        # Add record to driver's history
+        state = Map.merge(state, %{
+            ride_history: List.insert_at(state.ride_history, 0, record)
+        })
+
+        # Reset the drvier state
+        state = reset(state)
     end
 
+    # Reset the cab back to an available state
     defp reset(state) do
         log(state, :debug, "RESET ---------------")
 
@@ -163,9 +167,16 @@ defmodule Elber.Drivers.Driver do
             meter_off: nil,
             rider_pid: nil,
             rider_uuid: nil
-        })           
+        }) 
+
+        # Update the state cache
+        status = CityServer.update_state_cache(state)
+
+        # Return new state
+        state                  
     end
 
+    # End the driver's shift
     defp punch_off(state) do
         log(state, :info, "---------- OFF THE CLOCK ----------") 
 
@@ -199,6 +210,7 @@ defmodule Elber.Drivers.Driver do
         Timex.format!(Timex.local, "{ISO:Extended}")
     end
 
+    # Notify the Zones of the driver's availability
     defp update_availability(at_loc, to_loc \\ nil) do
         if at_loc != nil do
             remove_status = Zone.remove_available_driver(at_loc)
@@ -209,6 +221,7 @@ defmodule Elber.Drivers.Driver do
         end
     end
 
+    # Notify the Zones of the current driver's location
     defp update_gps(at_loc, to_loc \\ nil) do
         if at_loc != nil do
             remove_status = Zone.remove_driver_in(at_loc)
@@ -240,7 +253,7 @@ defmodule Elber.Drivers.Driver do
             update_gps(nil, state.curr_loc) 
 
             # update the state cache
-            status = Elber.Server.update_state_cache(state)    
+            status = CityServer.update_state_cache(state)    
             
             # go find first customer
             Process.send_after(self(), {:search}, 5000, [])
@@ -258,7 +271,7 @@ defmodule Elber.Drivers.Driver do
             rider_requests: List.insert_at(state.rider_requests, 0, rider.uuid)
         })
         
-        # is this drivare available?
+        # is this driver available?
         if state.available == True do
             state = Map.merge(state, %{
                 searching: False,
@@ -272,7 +285,7 @@ defmodule Elber.Drivers.Driver do
                 dropoff_loc: rider.dropoff_loc
             })
 
-            # Remove self from availability to riders
+            # remove self from availability to riders
             update_availability(state.curr_loc)
 
             # now go pick up the rider
@@ -306,7 +319,8 @@ defmodule Elber.Drivers.Driver do
             log(state, :info, "At pickup location [#{state.pickup_loc}] for [#{state.rider_uuid}]")
 
             # send arrived notification to rider
-            try do        
+            try do
+                # Notify the rider that the driver has arrived
                 status = Elber.Riders.Rider.driver_arrived(state.rider_pid)
 
                 # send begin trip notification to self
@@ -317,8 +331,7 @@ defmodule Elber.Drivers.Driver do
                     })
                     send(self(), {:begin_trip})
                 else
-                    log(state, :error, "ERROR picking up [#{state.rider_uuid}]")                 
-                    #Logger.error("[#{state.uuid}] ERROR picking up [#{state.rider_uuid}]")            
+                    log(state, :error, "ERROR picking up [#{state.rider_uuid}]")           
                 end
             catch
                 :exit, _ -> 
@@ -334,6 +347,7 @@ defmodule Elber.Drivers.Driver do
     def handle_info({:begin_trip}, state) do
         log(state, :info, "Begin trip for [#{state.rider_uuid}]")        
 
+        # Turn the meter on
         state = Map.merge(state, %{meter_on: get_datetime})
 
         # get it rollin'
@@ -346,7 +360,6 @@ defmodule Elber.Drivers.Driver do
         else
             log(state, :error, "ERROR reaching destination for [#{state.rider_uuid}]")
         end
-
         {:noreply, state}
     end
 
@@ -355,21 +368,13 @@ defmodule Elber.Drivers.Driver do
         log(state, :info, "End trip for [#{state.rider_uuid}]")
         
         # trun the meter off
-        state = Map.merge(state, %{
-            meter_off: get_datetime,
-        })
+        state = Map.merge(state, %{meter_off: get_datetime})
 
-        # drop off
+        # Notify rider they are being dropped off
         _ = Elber.Riders.Rider.dropoff(state.rider_pid)
 
-        # end trip and write record
-        status = end_trip(state)
-
-        # reset the driver state
-        state = reset(state)
-
-        # update the state cache
-        status = Elber.Server.update_state_cache(state)
+        # End trip: write record and reset driver status
+        state = end_trip(state)
 
         # hang for a couple seconds
         :timer.sleep(5000)        
@@ -393,13 +398,7 @@ defmodule Elber.Drivers.Driver do
                 update_availability(nil, state.curr_loc)
 
                 # set searching state
-                state = Map.merge(state, %{
-                    searching: True
-                })
-
-                # search until a customer request comes in
-                # hang in this zone for a bit
-                :timer.sleep(2000)
+                state = Map.merge(state, %{searching: True})
 
                 # Move to a random adjacent zone
                 # - get adjacent zones
@@ -417,8 +416,8 @@ defmodule Elber.Drivers.Driver do
                 # reset cab state
                 state = reset(state)
 
-                # update the state cache
-                status = Elber.Server.update_state_cache(state)                 
+                # hang in this zone for a bit
+                :timer.sleep(2000)                           
 
                 # continue the search
                 send(self(), {:search})
