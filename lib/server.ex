@@ -3,39 +3,37 @@ defmodule Elber.Server do
     require Logger
     require UUID
     import Supervisor.Spec
-    alias Elber.Zones.Zone    
+    alias Elber.Zones.Zone
+    alias Elber.Drivers.Driver
+    alias Elber.Riders.Rider
+    alias Elber.Zones.Struct, as: ZoneStruct
+    alias Elber.Drivers.Struct, as: DriverStruct
+    alias Elber.Riders.Struct, as: RiderStruct
+    alias Elber.Zones.Supervisor, as: ZoneSupervisor
+    alias Elber.Drivers.Supervisor, as: DriverSupervisor
+    alias Elber.Riders.Supervisor, as: RiderSupervisor
+
+    @name :city_server
 
     defmodule State do
         defstruct sup: nil, size: nil, mfa: nil, grid_size: nil
     end    
 
     def start_link(city_supervisor, config) do     
-        GenServer.start_link(__MODULE__, [city_supervisor, config], name: :city_server)
+        GenServer.start_link(__MODULE__, [city_supervisor, config], name: @name)
     end
 
     def state do
-        GenServer.call(:city_server, {:state})
+        GenServer.call(@name, {:state})
     end
 
-    def get_zone_state(zone) do
-        GenServer.call(:city_server, {:get_zone_state, zone})
+    def update_state_cache(entity_state) do
+        GenServer.call(@name, {:update_state_cache, entity_state})
     end
 
-    def add_driver do
-        
-    end
-
-    def remove_driver do
-        
-    end
-
-    def add_rider do
-        
-    end
-
-    def remove_rider do
-
-    end
+    def get_state_cache(entity_state) do
+        GenServer.call(@name, {:get_state_cache})
+    end    
 
     # used to lookup name of process
     defp via_tuple(name) do
@@ -45,6 +43,7 @@ defmodule Elber.Server do
     # ------------------------------------
     # PRIVATE
     # ------------------------------------
+    # create coordinate zones for a city grid
     defp create_grid({x, y}) do
         # grid list
         for row <- 1..x, col <- 1..y do
@@ -52,10 +51,27 @@ defmodule Elber.Server do
         end
     end
 
+    defp create_cache(table) do
+        :ets.new(table, [:set, :protected, :named_table])
+    end
+
+    defp update_cache(table, pid, state) do
+        :ets.insert(table, {pid, state})
+    end
+
+    defp get_cache(table, pid) do
+        :ets.lookup(table, pid)
+    end
+
+    defp delete_cache(table, pid) do
+        :ets.delete(table, pid)
+    end
+
+    # NOTE: Should eventually be moved to a ZoneServer
     defp start_zone(zone_supervisor, id, coordinates, grid, grid_size) do
         # build name from map iteration accumulator
         zone_id = :"zone#{id}"
-        zone_state = %Elber.Zones.Struct{ 
+        zone_state = %ZoneStruct{ 
             :zone_id => zone_id, 
             :coordinates => coordinates,
             :grid => grid,
@@ -66,35 +82,52 @@ defmodule Elber.Server do
         # create the worker data
         Supervisor.start_child(
             zone_supervisor, 
-            worker(Elber.Zones.Zone, [zone_id, zone_state], opts)
+            worker(Zone, [zone_id, zone_state], opts)
         )       
     end
 
-    defp start_driver(driver_supervisor) do
+    # NOTE: Should eventually be moved to a DriverServer
+    defp start_driver(driver_supervisor, state \\ nil) do
         # create uuid
         uuid = "d-" <> UUID.uuid4
 
         # new driver starting state
-        state = %Elber.Drivers.Struct{
-            uuid: uuid
-        }
+        if state == nil do
+            state = %DriverStruct{
+                uuid: uuid
+            }
+        end
 
         # create the worker
-        Supervisor.start_child(driver_supervisor, [state])
+        {status, pid} = DriverSupervisor.start_driver(state)
+
+        if status == :ok do
+            _ = update_cache(:statecache, pid, state)
+            pid
+        else
+            nil
+        end
     end
 
+    # NOTE: Should eventually be moved to a RiderServer
     defp start_rider(rider_supervisor, grid_size) do
         # create uuid
         uuid = "r-" <> UUID.uuid4
 
-        state = %Elber.Riders.Struct{
+        state = %RiderStruct{
             uuid: uuid,
             pickup_loc: get_random_zone(grid_size),
             dropoff_loc: get_random_zone(grid_size)
         }
 
         # create the worker
-        Supervisor.start_child(rider_supervisor, [state])
+        {status, pid} = RiderSupervisor.start_rider(state)
+
+        if status == :ok do
+            pid
+        else
+            nil
+        end
     end
 
     def get_random_zone({x, y}) do
@@ -108,54 +141,40 @@ defmodule Elber.Server do
     # ------------------------------------
     def init([city_supervisor, config]) do
         Logger.info("Server init...")
-        #IO.inspect city_supervisor
 
         # update state with the city supervisor pid
         config = put_in(config, [:city_supervisor], city_supervisor)
 
         # start the supervisors
-        send self(), {:start}
-
-        # start cleaning out zones of dead driver processes
-        Process.send_after(self(), {:check_zones}, 10000)        
+        send self(), {:start}     
 
         {:ok, config}
     end
 
-    # TODO: go through all the zones, get all the drivers and purge ones that aren't alive
-    def handle_info({:check_zones}, state) do
-        # HACK: hardcoding for 12x12 grid
-        # get all zones
-        removed = Enum.map(1..144, fn(num) ->
-            zone_name = :"zone#{num}"
-            drivers = Zone.get_available_drivers(zone_name)
-            removed = Enum.each(drivers, fn(driver_pid) ->
-                if !Process.alive?(driver_pid) do
-                    Logger.info("PURGING DEAD DRIVER #{inspect(driver_pid)} from #{zone_name}")
-                    Zone.remove_available_driver(zone_name, [driver_pid, nil])
-                end
-                nil
-            end)
-            nil
-        end)
-        Process.send_after(self(), {:check_zones}, 30000)
-        {:noreply, state}
-    end
-
     def handle_call({:state}, _from, state) do
         {:reply, state, state}    
-    end    
-
-    def handle_call({:get_zone_state, zone}, _from, state) do
-        zone_state = Elber.Zones.Zone.state(zone)
-        {:reply, zone_state, state}
     end
+
+    # updates the cache for calling process
+    def handle_call({:update_state_cache, entity_state}, {_from, ref}, state) do
+        _ = update_cache(:statecache, _from, entity_state)
+        {:reply, :ok, state}
+    end
+
+    # get the cache for the calling process
+    def handle_call({:get_state_cache}, {_from, ref}, state) do
+        entity_state = get_cache(:statecache, _from)
+        {:reply, entity_state, state}
+    end    
 
     def handle_info({:start}, state) do
         Logger.info("Starting supervisors...")
 
+        # initialize state cache
+        cache = create_cache(:statecache)        
+
         # start zone supervisor
-        {_, zone_sup} = Supervisor.start_child(state.city_supervisor, supervisor(Elber.Zones.Supervisor, []))
+        {_, zone_sup} = Supervisor.start_child(state.city_supervisor, supervisor(ZoneSupervisor, []))
         Logger.info("Zone supervisor started")        
         state = put_in(state, [:zone_supervisor], zone_sup)
 
@@ -172,27 +191,98 @@ defmodule Elber.Server do
         #IO.inspect zones
 
         # start driver supervisor
-        {_, driver_sup} = Supervisor.start_child(state.city_supervisor, supervisor(Elber.Drivers.Supervisor, []))
+        {_, driver_sup} = Supervisor.start_child(state.city_supervisor, supervisor(DriverSupervisor, []))
         Logger.info("Driver supervisor started")        
         state = put_in(state, [:driver_supervisor], driver_sup)
-        drivers = Enum.each(1..state.drivers, fn(x) ->
-            {_, worker} = start_driver(driver_sup)
-            #IO.inspect worker
-            worker
+        drivers = Enum.map(1..state.drivers, fn(x) ->
+            driver_pid = start_driver(driver_sup)
+
+            if is_pid(driver_pid) do
+               # start monitor
+               mon_ref = Process.monitor(driver_pid)
+
+                # make sure a valid pid was returned
+               {driver_pid, mon_ref} 
+            else
+                nil
+            end
         end)
-        #IO.inspect drivers
         
         # start rider supervisor
-        {_, rider_sup} = Supervisor.start_child(state.city_supervisor, supervisor(Elber.Riders.Supervisor, []))
-        Logger.info("Rider supervisor started")        
+        {_, rider_sup} = Supervisor.start_child(state.city_supervisor, supervisor(RiderSupervisor, []))
+        Logger.info("Rider supervisor started")   
+        # update state with rider supervisor pid     
         state = put_in(state, [:rider_supervisor], rider_sup)    
-        riders = Enum.each(1..state.riders, fn(x) ->
-            {_, worker} = start_rider(rider_sup, state.grid_size)
-            worker
-        end)    
-        #IO.inspect rider_sup
+        # start the riders
+        riders = Enum.map(1..state.riders, fn(x) ->
+            # start the process
+            rider_pid = start_rider(rider_sup, state.grid_size)
 
-        #IO.inspect state
+            # make sure a valid pid was returned
+            if is_pid(rider_pid) do
+                rider_pid
+            else
+                nil
+            end
+        end)
+
         {:noreply, state}
     end
+
+    # TEST EXIT
+    def handle_info({:EXIT, worker_sup, _reason}, state) do 
+        Logger.info("Driver [#{inspect(worker_sup)}] EXIT: [#{inspect(_reason)}]")        
+        IO.inspect _reason
+        IO.inspect worker_sup
+        {:noreply, state}
+    end
+
+    # DRVIER CRASH
+    def handle_info({:DOWN, ref, :process, pid, {_reason, process_state}}, state) do 
+        Logger.error("Drvier [#{inspect(pid)}] has crashed: [#{inspect(_reason)}][#{inspect(process_state)}]")
+
+        # attempt to get prior state
+        cache = get_cache(:statecache, pid)
+
+        # does the cache exist?
+        if Enum.count(cache) == 0 do
+            Logger.error("NOT monitoring drvier [#{inspect(pid)}]")
+        else
+            [{driver_pid, past_state}] = cache       
+
+            # purge old pid from zone
+            Zone.remove_available_driver(past_state.curr_loc, pid)
+
+            # Demonitor dead pid, and remove cache
+            true = Process.demonitor(ref)
+            true = delete_cache(:statecache, driver_pid)
+
+            # Reset available so the driver can be redeployed
+            past_state = Map.merge(past_state, %{available: False})
+
+            # spawn new driver
+            new_driver = start_driver(state.driver_supervisor, past_state)
+
+            # make sure a valid pid was returned            
+            if new_driver != nil do
+                Logger.info("Started new driver [#{inspect(new_driver)}]")
+                
+                # Start montitoring new drive
+                ref = Process.monitor(new_driver)
+                
+                Logger.info("Monitoring new driver [#{inspect(new_driver)}] - [#{inspect(ref)}]")                
+            else
+                Logger.error("FAILED to start new driver after crash of [#{inspect(pid)}]")
+            end   
+        end
+        {:noreply, state} 
+    end
+    
+    # TEST
+    def handle_info({:DOWN, ref, :process, pid, _reason}, state) do 
+        Logger.error("Driver [#{inspect(pid)}] DOWN: [#{inspect(_reason)}]")
+        IO.inspect pid
+        IO.inspect _reason          
+        {:noreply, state}        
+    end    
 end

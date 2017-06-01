@@ -59,8 +59,8 @@ defmodule Elber.Zones.Zone do
         GenServer.call(via_tuple(zone), {:get_available_drivers})
     end  
 
-    def remove_available_driver(zone) do
-        GenServer.call(via_tuple(zone), {:remove_available_driver, zone})         
+    def remove_available_driver(zone, driver \\ nil) do
+        GenServer.call(via_tuple(zone), {:remove_available_driver, driver})         
     end
 
     def add_driver_in(zone) do
@@ -149,9 +149,15 @@ defmodule Elber.Zones.Zone do
         {:reply, :ok, state}
     end    
 
-    def handle_call({:remove_available_driver, zone}, {_from, reference}, state) do
-        Logger.debug("[#{zone}] Removing available driver [#{inspect(_from)}]")
-        drivers = List.delete(state.drivers_available, _from)
+    def handle_call({:remove_available_driver, driver}, {_from, reference}, state) do
+        # if driver pid not passed use passed driver pid
+        if driver == nil do
+            pid = _from
+        else
+            pid = driver
+        end
+        Logger.debug("[#{state.zone_id}] Removing available driver [#{inspect(pid)}]")
+        drivers = List.delete(state.drivers_available, pid)
         state = Map.merge(state, %{
             drivers_available: drivers
         })

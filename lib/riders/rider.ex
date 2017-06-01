@@ -4,7 +4,7 @@ defmodule Elber.Riders.Rider do
     alias Elber.Zones.Zone
     
     def start_link(state) do
-        Logger.info("[#{state.uuid}] Starting rider")        
+        log(state, :info, "Starting rider process")              
         GenServer.start(__MODULE__, [state], [])
     end
 
@@ -17,14 +17,14 @@ defmodule Elber.Riders.Rider do
     end
 
     def dropoff(rider_pid) do
-        GenServer.call(rider_pid, {:dropoff})
+        GenServer.cast(rider_pid, {:dropoff})
     end
 
     # -----------------------------------
     # PRIVATE
     # -----------------------------------  
     defp send_ride_request(state, driver) do
-        Logger.info("[#{state.uuid}] Found driver [#{inspect(driver)}] in [#{state.pickup_loc}]")
+        log(state, :info, "Found driver [#{inspect(driver)}] in [#{state.pickup_loc}]")
 
         # send drvier.request_ride
         data = %{
@@ -39,7 +39,7 @@ defmodule Elber.Riders.Rider do
 
             # update status and now wait for arrival
             if status == :ok do
-                Logger.info("[#{state.uuid}] Request accepted from [#{inspect(driver)}]")                
+                log(state, :info, "Request accepted from [#{inspect(driver)}]")               
                 state = Map.merge(state, %{
                     is_requesting: False,
                     driver_pid: driver,
@@ -47,7 +47,7 @@ defmodule Elber.Riders.Rider do
                 })
             else
                 # pause for a moment
-                Logger.info("[#{state.uuid}] Request DENIED from [#{inspect(driver)}]")
+                log(state, :info, "Request DENIED from [#{inspect(driver)}]")
 
                 # add driver to denied_requests list
                 if !driver in state.requests_denied do
@@ -55,18 +55,29 @@ defmodule Elber.Riders.Rider do
                         requests_denied: state.requests_denied ++ [driver]
                     })
                 end
-                #IO.inspect state
+
                 :timer.sleep(1000)
                 send(self(), {:locate_driver})
-            end            
+            end       
         catch
             :exit, _ -> 
-                Logger.error("[#{state.uuid}] ERROR requesting ride from [#{inspect(driver)}]. Locating another driver")
+                log(state, :error, "ERROR requesting ride from [#{inspect(driver)}]. Locating another driver") 
                 :timer.sleep(1000)
-                send(self(), {:locate_driver})      
+                send(self(), {:locate_driver})
+        end            
+        state   
+    end
+
+    defp log(state, type, msg) do
+        predicate = "[r][#{state.uuid}] "
+        case type do
+            :debug ->
+                Logger.debug(predicate <> msg)
+            :error ->
+                Logger.error(predicate <> msg)
+            _ ->
+                Logger.info(predicate <> msg)
         end
-        
-        state     
     end
 
     defp get_datetime do
@@ -77,9 +88,7 @@ defmodule Elber.Riders.Rider do
     # CALLBACKS
     # -----------------------------------
     def init([state]) do
-        state = Map.merge(state, %{
-            start_datetime: get_datetime
-        })
+        state = Map.merge(state, %{start_datetime: get_datetime})
         send(self(), {:locate_driver})       
         {:ok, state}
     end
@@ -90,7 +99,7 @@ defmodule Elber.Riders.Rider do
 
     # TODO:???
     def handle_call({:driver_arrived}, _from, state) do
-        Logger.debug("[#{state.uuid}] Driver [#{inspect(state.driver_pid)}] has arrived")
+        log(state, :info, "Driver [#{inspect(state.driver_pid)}] has arrived")
 
         # TODO: match the sender with the expected driver (state.driver_pid)
 
@@ -98,14 +107,15 @@ defmodule Elber.Riders.Rider do
         state = Map.merge(state, %{
             in_vehicle: True,
             pickup_datetime: "NOW"
-        })
+        })       
 
         # off we go
         {:reply, :ok, state}
     end
 
-    def handle_call({:dropoff}, _from, state) do
-        Logger.debug("[#{state.uuid}] Dropoff at [#{state.dropoff_loc}]")
+    def handle_cast({:dropoff}, state) do
+        log(state, :info, "Dropoff at [#{state.dropoff_loc}]")         
+        #Logger.debug("[#{state.uuid}] Dropoff at [#{state.dropoff_loc}]")
 
         state = Map.merge(state, %{
             dropoff_datetime: "NOW",
@@ -113,32 +123,33 @@ defmodule Elber.Riders.Rider do
             in_vehicle: False
         })
 
-        #IO.inspect state
+        # the job is done
+        Process.exit(self(), :normal)
 
-        {:reply, state, state}
+        {:noreply, state}
     end
 
     def handle_info({:locate_driver}, state) do
+        log(state, :info, "Looking in [#{state.pickup_loc}] for a driver")         
+        
         # Get a driver from zone if any available
-        Logger.debug("[#{state.uuid}] Looking in [#{state.pickup_loc}] for a driver")
         driver = Zone.get_available_driver(state.pickup_loc)
 
-        # look in zone for a driver that hasn't already denied
-        if driver != nil && !driver in state.requests_denied do
-            send_ride_request(state, driver)
+        # look in zone for a driver that hasn't already been denied
+        if driver != nil && !driver in state.requests_denied do           
+            state = send_ride_request(state, driver) 
         else
-            Logger.info("[#{state.uuid}] No driver found in [#{state.pickup_loc}]. Expanding search..")
+            log(state, :info, "No driver found in [#{state.pickup_loc}]. Expanding search..")
 
             # not found in current zone. search adjacent zones to get first available driver
             driver = Zone.get_adjacent_zones(state.pickup_loc)
             |> (&Enum.map(&1, fn(zone) -> Zone.get_available_driver(zone) end)).()
             |> (&Enum.filter(&1, fn(driver) -> driver != nil end)).()
             |> List.first
-            
-            #IO.inspect driver
 
-            if driver != nil do             
-                send_ride_request(state, driver)
+            # did we find a driver in adjacent zone?
+            if driver != nil do                        
+                state = send_ride_request(state, driver)                      
             else
                 # try again until a driver is within range
                 :timer.sleep(3000)
@@ -147,6 +158,5 @@ defmodule Elber.Riders.Rider do
         end
         {:noreply, state}
     end
-
 
 end

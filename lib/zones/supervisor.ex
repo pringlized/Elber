@@ -1,9 +1,15 @@
 defmodule Elber.Zones.Supervisor do
     use Supervisor
 
+    @name :zone_supervisor
+
     def start_link do
-        Supervisor.start_link(__MODULE__, [], name: :zone_supervisor)
+        Supervisor.start_link(__MODULE__, [], name: @name)
     end
+
+    def start_zone(state) do
+        Supervisor.start_child(@name, [state])        
+    end    
 
     # ------------------------------------
     # CALLBACKS

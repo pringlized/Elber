@@ -40,7 +40,7 @@ defmodule Elber.Drivers.Struct do
         # where the driver is currently driving through
         curr_route: nil,        
         # where at currently
-        curr_loc: nil,     
+        curr_loc: :zone1,     
         # where to pickup up the rider
         pickup_loc: nil,
         # where to dropoff the rider

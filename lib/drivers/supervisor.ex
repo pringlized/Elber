@@ -1,9 +1,15 @@
 defmodule Elber.Drivers.Supervisor do
     use Supervisor
 
+    @name :driver_supervisor
+
     def start_link do
-        Supervisor.start_link(__MODULE__, [], name: :driver_supervisor)
+        Supervisor.start_link(__MODULE__, [], name: @name)
     end  
+
+    def start_driver(state) do
+        Supervisor.start_child(@name, [state])        
+    end
 
     # ------------------------------------
     # CALLBACKS
