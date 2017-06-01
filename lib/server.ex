@@ -68,6 +68,18 @@ defmodule Elber.Server do
     end
 
     # NOTE: Should eventually be moved to a ZoneServer
+    defp start_zones(state, zone_supervisor) do
+        grid = create_grid(state.grid_size)
+        Enum.map_reduce(grid, 1, fn(x, acc) -> 
+            # create the worker data
+            {_, worker} = start_zone(zone_supervisor, acc, x, grid, state.grid_size)
+
+            # return data & accumulator
+            { worker, acc + 1 }
+        end)        
+    end
+
+    # NOTE: Should eventually be moved to a ZoneServer
     defp start_zone(zone_supervisor, id, coordinates, grid, grid_size) do
         # build name from map iteration accumulator
         zone_id = :"zone#{id}"
@@ -84,6 +96,21 @@ defmodule Elber.Server do
             zone_supervisor, 
             worker(Zone, [zone_id, zone_state], opts)
         )       
+    end
+
+    # NOTE: Should eventually be moved to a DriverServer
+    defp start_drivers(state, driver_supervisor) do
+        Enum.map(1..state.drivers, fn(x) ->
+            pid = start_driver(driver_supervisor)
+
+            if is_pid(pid) do
+               # start monitor
+               ref = Process.monitor(pid)
+               {pid, ref} 
+            else
+                nil
+            end
+        end)        
     end
 
     # NOTE: Should eventually be moved to a DriverServer
@@ -107,6 +134,21 @@ defmodule Elber.Server do
         else
             nil
         end
+    end
+
+    # NOTE: Should eventually be moved to a RiderServer
+    defp start_riders(state, rider_supervisor) do
+        Enum.map(1..state.riders, fn(x) ->
+            # start the process
+            pid = start_rider(rider_supervisor, state.grid_size)
+
+            # make sure a valid pid was returned
+            if is_pid(pid) do
+                pid
+            else
+                nil
+            end
+        end)        
     end
 
     # NOTE: Should eventually be moved to a RiderServer
@@ -171,60 +213,33 @@ defmodule Elber.Server do
         Logger.info("Starting supervisors...")
 
         # initialize state cache
-        cache = create_cache(:statecache)        
+        cache = create_cache(:statecache)
 
-        # start zone supervisor
+        # Start the supervisors
+        Logger.info("Starting Zone Supervisor")         
         {_, zone_sup} = Supervisor.start_child(state.city_supervisor, supervisor(ZoneSupervisor, []))
-        Logger.info("Zone supervisor started")        
-        state = put_in(state, [:zone_supervisor], zone_sup)
-
-        # add zones
-        grid = create_grid(state.grid_size)
-        zones = Enum.map_reduce(grid, 1, fn(x, acc) -> 
-            # create the worker data
-            {_, worker} = start_zone(state.zone_supervisor, acc, x, grid, state.grid_size)
-
-            # return data & accumulator
-            { worker, acc + 1 }
-        end)
-
-        #IO.inspect zones
-
-        # start driver supervisor
+        Logger.info("Starting Driver Supervisor...")
         {_, driver_sup} = Supervisor.start_child(state.city_supervisor, supervisor(DriverSupervisor, []))
-        Logger.info("Driver supervisor started")        
-        state = put_in(state, [:driver_supervisor], driver_sup)
-        drivers = Enum.map(1..state.drivers, fn(x) ->
-            driver_pid = start_driver(driver_sup)
-
-            if is_pid(driver_pid) do
-               # start monitor
-               mon_ref = Process.monitor(driver_pid)
-
-                # make sure a valid pid was returned
-               {driver_pid, mon_ref} 
-            else
-                nil
-            end
-        end)
-        
-        # start rider supervisor
+        Logger.info("Starting Rider Supervisor")
         {_, rider_sup} = Supervisor.start_child(state.city_supervisor, supervisor(RiderSupervisor, []))
-        Logger.info("Rider supervisor started")   
-        # update state with rider supervisor pid     
-        state = put_in(state, [:rider_supervisor], rider_sup)    
-        # start the riders
-        riders = Enum.map(1..state.riders, fn(x) ->
-            # start the process
-            rider_pid = start_rider(rider_sup, state.grid_size)
 
-            # make sure a valid pid was returned
-            if is_pid(rider_pid) do
-                rider_pid
-            else
-                nil
-            end
-        end)
+        # Init zones
+        zones = start_zones(state, zone_sup)
+
+        # Start the drivers
+        Logger.info("Seeding grid with drivers...")
+        drivers = start_drivers(state, driver_sup)
+
+        # Start the riders
+        Logger.info("Seeding grid with riders..")
+        riders = start_riders(state, rider_sup)
+
+        # Update state with supervisor pid
+        state = Map.merge(state, %{
+            zone_supervisor: zone_sup,
+            driver_supervisor: driver_sup,
+            rider_supervisor: rider_sup
+        })                   
 
         {:noreply, state}
     end

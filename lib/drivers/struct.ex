@@ -13,7 +13,7 @@ defmodule Elber.Drivers.Struct do
         shift_length: 70,
         # start_loc:
         start_loc: :zone1,
-        # ride pid
+        # rider pid
         rider_pid: nil,
         # rider id used by the system (in leiu of pid)
         rider_uuid: nil,
